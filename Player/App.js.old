@@ -1,0 +1,225 @@
+import { StatusBar } from 'expo-status-bar';
+import { useState, useEffect, useRef } from 'react';
+import { Button, StyleSheet, Text, View } from 'react-native';
+import { TRACKS } from './components/tracls-data';
+import { NavigationContainer } from '@react-navigation/native';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs'
+import { FontAwesome } from '@expo/vector-icons';
+// import Video from 'react-native-video';
+import debounce from 'lodash.debounce';
+import Slider from '@react-native-community/slider';
+
+import { Audio } from 'expo-av'
+import List from './components/DeezerSearch';
+
+import AlbumCover from './components/AlbumCover';
+import AlbumDetails from './components/AlbumDetails';
+import Controls from './components/Controls';
+
+const Tab = createBottomTabNavigator();
+
+export default function App() {
+
+  const [sound, setSound] = useState();
+  const [selectedTracks, setSelectedTrack] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [position, setPosition] = useState(0);
+  const [isSeeking, setIsSeeking] = useState(false);
+  const [trackInfo, setTrackInfo] = useState([{title: 'No Name', duration: '200', cover: 'None', artist: 'Author'}])
+
+  const positionIntervalRef = useRef(null);
+
+  useEffect(() => {
+    return sound
+      ? () => {
+        console.log('Unloading Sound');
+        sound.unloadAsync();
+      }
+      : undefined;
+  }, [sound]);
+
+  async function loadAudio(audioUrl) {
+    try {
+      console.log('Loading Sound');
+      const { sound, status } = await Audio.Sound.createAsync(
+        { uri: audioUrl },
+        { shouldPlay: true }
+      );
+      setSound(sound);
+      setDuration(status.durationMillis);
+      setIsPlaying(true); // Assuming you want to play immediately
+      sound.setOnPlaybackStatusUpdate(updateSeeker);
+    } catch (error) {
+      console.error('Error loading audio:', error);
+    }
+  }
+
+
+  async function playPauseAudio() {
+    if (isPlaying) {
+      console.log('Pausing Sound');
+      await sound.pauseAsync();
+      setIsPlaying(false);
+    } else {
+      console.log('Playing Sound');
+      await sound.playAsync();
+      setIsPlaying(true);
+    }
+  }
+
+  function updateSeeker(status) {
+    // if (status.isPlaying && status.positionMillis !== position) {
+    //   const newPosition = Math.floor(status.positionMillis / 1000); // Convert to seconds
+    //   if (newPosition !== Math.floor(position / 1000)) { // Update only if the second has changed
+    //     setPosition(status.positionMillis);
+    //   }
+    // }
+
+    debouncedUpdatePosition(status.positionMillis);
+  }
+
+  const debouncedUpdatePosition = debounce((position) => {
+    if (!isSeeking) {
+      setPosition(position);
+    }
+  }, 1000, { leading: true, trailing: true });
+
+  // function handleSeek(value) {
+  //   if (!isSeeking && status.isPlaying) {
+  //     setPosition(status.positionMillis);
+  //   }
+  // }
+
+  async function handleSeekRelease(value) {
+    if (sound) {
+      await sound.setPositionAsync(value);
+      setPosition(value);
+      if (!isPlaying) {
+        await sound.playAsync();
+        setIsPlaying(true);
+      }
+    }
+  }
+
+  useEffect(() => {
+    return () => clearInterval(positionIntervalRef.current);
+  }, []);
+
+
+  function playNextSong() {
+    const nextTrackIndex = (selectedTracks + 1) % TRACKS.length; // Wrap around to the first track
+    setSelectedTrack(nextTrackIndex);
+    loadTrack(nextTrackIndex); // Load the track details when changed
+  }
+  
+  function playPrevSong() {
+    const prevTrackIndex = (selectedTracks - 1 + TRACKS.length) % TRACKS.length; // Wrap around to the last track
+    setSelectedTrack(prevTrackIndex);
+    loadTrack(prevTrackIndex); // Load the track details when changed
+  }
+  
+  async function loadTrack(trackIndex) {
+    try {
+      const { sound, status } = await Audio.Sound.createAsync(
+        { uri: TRACKS[trackIndex].audioUrl }, // Assuming audioUrl is correct
+        { shouldPlay: isPlaying }
+      );
+      setSound(sound);
+      setDuration(status.durationMillis);
+      sound.setOnPlaybackStatusUpdate(updateSeeker);
+      if (isPlaying) {
+        await sound.playAsync();
+      }
+    } catch (error) {
+      console.error("Failed to load track", error);
+    }
+  }
+  async function loadAudio(audioUrl) {
+  try {
+    console.log('Loading Sound');
+    const { sound, status } = await Audio.Sound.createAsync(
+      { uri: audioUrl },
+      { shouldPlay: true }
+    );
+    setSound(sound);
+    setDuration(status.durationMillis);
+    setIsPlaying(true); // Assuming you want to play immediately
+    sound.setOnPlaybackStatusUpdate(updateSeeker);
+  } catch (error) {
+    console.error('Error loading audio:', error);
+  }
+}
+
+const selectTrack = (track) => {
+  setSound(null);
+  setSelectedTrack(track);
+  loadAudio(track.preview);
+  setTrackInfo({title: track.title, duration: track.duration, cover: track.album.cover, artist: track.artist.name})
+};
+
+
+  function Player(){
+    return(
+      <View style={styles.container}>
+      <StatusBar style="auto" hidden />
+      <AlbumCover albumCover={trackInfo.cover} />
+      <AlbumDetails trackName={trackInfo.title} artistsName={trackInfo.artist} />
+
+      <Slider style={styles.slider}
+                value={position}
+                maximumValue={trackInfo.duration}
+                minimumTrackTintColor="#1fb28a"
+                maximumTrackTintColor="#d3d3d3"
+                thumbTintColor="#1a9274"
+                onValueChange={value => {
+                  setIsSeeking(true);
+                  setPosition(value);
+                }}
+                onSlidingComplete={value => {
+                  handleSeekRelease(value);
+                  setIsSeeking(false);
+                }}></Slider>
+
+      <Controls togglePlayPauseBtn={playPauseAudio} pause={!isPlaying} {...{ playNextSong }} {...{ playPrevSong }}
+        currentPosition={position}
+        trackLength={trackInfo.duration}
+        onSeek={updateSeeker}
+        onSeekRelease={handleSeekRelease}
+      />
+    </View>
+    )
+  }
+
+  function Lst(){
+    return <List onTrackSelect={selectTrack}/>
+  }
+
+  return (
+    <>
+
+      <NavigationContainer>
+        <Tab.Navigator>
+          <Tab.Screen name='Audio Player' component={Player} options={
+            { tabBarIcon: ({ size, color }) => (<FontAwesome name="play" size={size} color={color} />) }
+          } />
+
+          <Tab.Screen name='Audio List' component={Lst} options={
+            { tabBarIcon: ({ size, color }) => (<FontAwesome name="list" size={size} color={color} />) }
+          } />
+
+        </Tab.Navigator>
+      </NavigationContainer>
+
+
+
+    </>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#11146',
+  },
+});
